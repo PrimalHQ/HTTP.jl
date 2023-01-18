@@ -40,6 +40,10 @@ function getproxy(scheme, host)
         return p
     elseif scheme == "https" && (p = get(ENV, "HTTPS_PROXY", ""); !isempty(p))
         return p
+    elseif scheme == "ws" && (p = get(ENV, "HTTP_PROXY", ""); !isempty(p))
+        return p
+    elseif scheme == "wss" && (p = get(ENV, "HTTPS_PROXY", ""); !isempty(p))
+        return p
     end
     return nothing
 end
@@ -100,12 +104,14 @@ function connectionlayer(handler)
                 elseif target_url.scheme in ("ws", ) && target_url.port == ""
                     target_url = URI(target_url, port=80) # if there is no port info, connect_tunnel will fail
                 end
+                connect_tun = (url.scheme == "socks5h") ? connect_tunnel_socks5 : connect_tunnel
                 r = if readtimeout > 0
-                    try_with_timeout(readtimeout) do _
-                        connect_tunnel(io, target_url, req)
+                    # try_with_timeout(readtimeout) do _
+                    try_with_timeout(() -> shouldtimeout(io, readtimeout), readtimeout, () -> close(io)) do
+                        connect_tun(io, target_url, req)
                     end
                 else
-                    connect_tunnel(io, target_url, req)
+                    connect_tun(io, target_url, req)
                 end
                 if r.status != 200
                     close(io)
@@ -222,6 +228,51 @@ function connect_tunnel(io, target_url, req)
     readheaders(io, request.response)
     # @debug "connect_tunnel: done reading headers"
     return request.response
+end
+
+function connect_tunnel_socks5(io, target_url, req)
+    target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
+    @debugv 1 "📡  CONNECT SOCKS5 tunnel to $target"
+
+    SUCCEEDED = 0x00
+
+    # auth
+    VER = 0x05
+    NMETHODS = 0x01
+    NO_AUTH_REQ = 0x00
+    METHODS = [NO_AUTH_REQ]
+    write(io, vcat(VER, NMETHODS, METHODS))
+    ver = read(io, UInt8)
+    method = read(io, UInt8)
+    @assert ver == VER
+    @assert method == NO_AUTH_REQ
+
+    # request
+    CMD_CONNECT = 0x01
+    CMD = CMD_CONNECT
+    RSV = 0x00
+    ATYP_IPV4 = 0x01
+    ATYP_DOMAINNAME = 0x03
+    ATYP_IPV6 = 0x04
+    ATYP = ATYP_DOMAINNAME
+    DST_ADDR = vcat([UInt8(length(target_url.host))], map(UInt8, collect(target_url.host)))
+    DST_PORT = hton(UInt16(parse(UInt16, target_url.port)))
+    bio = IOBuffer()
+    write(bio, vcat(VER, CMD, RSV, ATYP))
+    write(bio, DST_ADDR)
+    write(bio, DST_PORT)
+    write(io, take!(bio))
+
+    ver = read(io, UInt8); @assert ver == VER
+    rep = read(io, UInt8); @assert rep == SUCCEEDED "rep: $rep"
+    rsv = read(io, UInt8); @assert rsv == 0x00
+    atyp = read(io, UInt8); @assert atyp == ATYP_IPV4
+    # bnd_addr_len = read(io, UInt8)
+    # @assert bnd_addr_len < 1000
+    # @show bnd_addr = String(read(io, bnd_addr_len))
+    bnd_addr_port = [read(io, UInt8) for _ in 1:6]
+
+    Response(200)
 end
 
 end # module ConnectionRequest
