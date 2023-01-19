@@ -64,7 +64,7 @@ function connectionlayer(handler)
         if proxy !== nothing
             target_url = req.url
             url = URI(proxy)
-            if target_url.scheme == "http"
+            if target_url.scheme == "http" && url.scheme == "http"
                 req.target = string(target_url)
             end
 
@@ -86,21 +86,21 @@ function connectionlayer(handler)
 
         shouldreuse = !(target_url.scheme in ("ws", "wss"))
         try
-            if proxy !== nothing && target_url.scheme in ("https", "wss", "ws")
+            if proxy !== nothing && target_url.scheme in ("https", "http", "wss", "ws")
                 shouldreuse = false
                 # tunnel request
                 if target_url.scheme in ("https", "wss")
                     target_url = URI(target_url, port=443)
-                elseif target_url.scheme in ("ws", ) && target_url.port == ""
+                elseif target_url.scheme in ("http", "ws") && target_url.port == ""
                     target_url = URI(target_url, port=80) # if there is no port info, connect_tunnel will fail
                 end
                 connect_tun = (url.scheme == "socks5h") ? connect_tunnel_socks5 : connect_tunnel
                 r = if readtimeout > 0
                     try_with_timeout(() -> shouldtimeout(io, readtimeout), readtimeout, () -> close(io)) do
-                        connect_tun(io, target_url, req)
+                        connect_tun(io, target_url, url, req)
                     end
                 else
-                    connect_tun(io, target_url, req)
+                    connect_tun(io, target_url, url, req)
                 end
                 if r.status != 200
                     close(io)
@@ -136,7 +136,7 @@ end
 
 sockettype(url::URI, tcp, tls) = url.scheme in ("wss", "https") ? tls : tcp
 
-function connect_tunnel(io, target_url, req)
+function connect_tunnel(io, target_url, url, req)
     target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
     @debugv 1 "📡  CONNECT HTTPS tunnel to $target"
     headers = Dict("Host" => target)
@@ -152,47 +152,50 @@ function connect_tunnel(io, target_url, req)
     return request.response
 end
 
-function connect_tunnel_socks5(io, target_url, req)
-    target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
-    @debugv 1 "📡  CONNECT SOCKS5 tunnel to $target"
+function connect_tunnel_socks5(io, target_url, url, req)
+    chain = reverse([Tuple(split(p, ':')) for p in split(url.path, '/') if !isempty(p)])
+    push!(chain, (target_url.host, target_url.port))
+
+    target = "$(URIs.hoststring(chain[end][1])):$(chain[end][2])"
+    @debugv 1 "📡  CONNECT SOCKS5 tunnel to $target, chain length: $(length(chain))"
 
     SUCCEEDED = 0x00
-
-    # auth
     VER = 0x05
-    NMETHODS = 0x01
     NO_AUTH_REQ = 0x00
-    METHODS = [NO_AUTH_REQ]
-    write(io, vcat(VER, NMETHODS, METHODS))
-    ver = read(io, UInt8)
-    method = read(io, UInt8)
-    @assert ver == VER
-    @assert method == NO_AUTH_REQ
-
-    # request
     CMD_CONNECT = 0x01
-    CMD = CMD_CONNECT
     RSV = 0x00
     ATYP_IPV4 = 0x01
     ATYP_DOMAINNAME = 0x03
     ATYP_IPV6 = 0x04
-    ATYP = ATYP_DOMAINNAME
-    DST_ADDR = vcat([UInt8(length(target_url.host))], map(UInt8, collect(target_url.host)))
-    DST_PORT = hton(UInt16(parse(UInt16, target_url.port)))
-    bio = IOBuffer()
-    write(bio, vcat(VER, CMD, RSV, ATYP))
-    write(bio, DST_ADDR)
-    write(bio, DST_PORT)
-    write(io, take!(bio))
 
-    ver = read(io, UInt8); @assert ver == VER
-    rep = read(io, UInt8); @assert rep == SUCCEEDED "rep: $rep"
-    rsv = read(io, UInt8); @assert rsv == 0x00
-    atyp = read(io, UInt8); @assert atyp == ATYP_IPV4
-    # bnd_addr_len = read(io, UInt8)
-    # @assert bnd_addr_len < 1000
-    # @show bnd_addr = String(read(io, bnd_addr_len))
-    bnd_addr_port = [read(io, UInt8) for _ in 1:6]
+    for (host, port) in chain
+        # auth
+        NMETHODS = 0x01
+        METHODS = [NO_AUTH_REQ]
+        write(io, vcat(VER, NMETHODS, METHODS))
+        ver = read(io, UInt8)
+        method = read(io, UInt8)
+        @assert ver == VER
+        @assert method == NO_AUTH_REQ
+
+        # request
+        CMD = CMD_CONNECT
+        DST_PORT = hton(UInt16(parse(UInt16, port)))
+        ATYP =  ATYP_DOMAINNAME
+        DST_ADDR = vcat([UInt8(length(host))], map(UInt8, collect(host)))
+        bio = IOBuffer()
+        write(bio, vcat(VER, CMD, RSV, ATYP))
+        write(bio, DST_ADDR)
+        write(bio, DST_PORT)
+        write(io, take!(bio))
+
+        ver = read(io, UInt8); @assert ver == VER
+        rep = read(io, UInt8); @assert rep == SUCCEEDED "rep: $rep"
+        rsv = read(io, UInt8); @assert rsv == 0x00
+        atyp = read(io, UInt8); @assert atyp == ATYP_IPV4
+        bnd_addr = [Int(read(io, UInt8)) for _ in 1:4]
+        bnd_port = Int(ntoh(read(io, UInt16)))
+    end
 
     Response(200)
 end
