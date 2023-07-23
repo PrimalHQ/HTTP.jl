@@ -678,15 +678,18 @@ returned by `receive`. Note that `WebSocket` objects can be iterated,
 where each iteration yields a message until the connection is closed.
 """
 function receive(ws::WebSocket)
-    @debug "$(ws.id): Reading message"
-    @require !ws.readclosed
-    frame = readframe(ws.io, Frame, ws.readbuffer)
-    @debug "$(ws.id): Received frame: $frame"
-    done = checkreadframe!(ws, frame)
-    # common case of reading single non-control frame
-    done && return frame.payload
-    opcode = frame.flags.opcode
-    iscontrol(opcode) && return receive(ws)
+    frame = nothing
+    while true
+        @debugv 2 "$(ws.id): Reading message"
+        @require !ws.readclosed
+        frame = readframe(ws.io, Frame, ws.readbuffer)
+        @debugv 2 "$(ws.id): Received frame: $frame"
+        done = checkreadframe!(ws, frame)
+        # common case of reading single non-control frame
+        done && return frame.payload
+        opcode = frame.flags.opcode
+        iscontrol(opcode) || break
+    end
     # if we're here, we're reading a fragmented message
     payload = frame.payload
     while true
