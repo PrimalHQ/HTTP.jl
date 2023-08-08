@@ -654,6 +654,7 @@ where each iteration yields a message until the connection is closed.
 """
 function receive(ws::WebSocket)
     frame = nothing
+    opcode = nothing
     while true
         @debugv 2 "$(ws.id): Reading message"
         @require !ws.readclosed
