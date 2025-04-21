@@ -106,8 +106,8 @@ function connectionlayer(handler)
                 end
                 connect_tun = (url.scheme == "socks5h") ? connect_tunnel_socks5 : connect_tunnel
                 r = if readtimeout > 0
-                    # try_with_timeout(readtimeout) do _
-                    try_with_timeout(() -> shouldtimeout(io, readtimeout), readtimeout, () -> close(io)) do
+                    try_with_timeout(readtimeout) do _
+                    # try_with_timeout(() -> shouldtimeout(io, readtimeout), readtimeout, () -> close(io)) do
                         connect_tun(io, target_url, url, req)
                     end
                 else
@@ -235,7 +235,7 @@ function connect_tunnel_socks5(io, target_url, url, req)
     push!(chain, (target_url.host, target_url.port))
 
     target = "$(URIs.hoststring(chain[end][1])):$(chain[end][2])"
-    @debugv 1 "📡  CONNECT SOCKS5 tunnel to $target, chain length: $(length(chain))"
+    @debug "📡  CONNECT SOCKS5 tunnel to $target, chain length: $(length(chain))"
 
     SUCCEEDED = 0x00
     VER = 0x05

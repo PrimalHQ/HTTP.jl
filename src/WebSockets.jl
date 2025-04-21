@@ -681,10 +681,10 @@ function receive(ws::WebSocket)
     frame = nothing
     opcode = nothing
     while true
-        @debugv 2 "$(ws.id): Reading message"
+        @debug "$(ws.id): Reading message"
         @require !ws.readclosed
         frame = readframe(ws.io, Frame, ws.readbuffer)
-        @debugv 2 "$(ws.id): Received frame: $frame"
+        @debug "$(ws.id): Received frame: $frame"
         done = checkreadframe!(ws, frame)
         # common case of reading single non-control frame
         done && return frame.payload
