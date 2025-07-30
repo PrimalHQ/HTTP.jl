@@ -66,7 +66,10 @@ function IOExtras.startwrite(http::Stream)
         startwrite(http.stream)
     end
     m = messagetowrite(http)
-    if !hasheader(m, "Content-Length") &&
+    if m isa Request && m.method == "GET" && header(m, "Content-Length", "") == "0"
+        http.writechunked = ischunked(m)
+        removeheader(m, "Content-Length")
+    elseif !hasheader(m, "Content-Length") &&
        !hasheader(m, "Transfer-Encoding") &&
        !hasheader(m, "Upgrade") &&
        (m isa Request || (m.request.version >= v"1.1" && bodylength(m) > 0))
