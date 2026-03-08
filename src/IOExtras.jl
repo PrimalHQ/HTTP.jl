@@ -104,7 +104,7 @@ function safe_getpeername(io)
 end
 
 
-const ByteView = typeof(view(UInt8[], 1:0))
+const ByteView = SubArray{UInt8, 1, <:Any, Tuple{UnitRange{Int64}}, true}
 const nobytes = view(UInt8[], 1:0)
 
 """
